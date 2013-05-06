@@ -82,6 +82,11 @@ type Table struct {
 type Column struct {
 	name string
 	filter *bloom.BloomFilter
+	maximum string
+	minimum string
+	longest string
+	shortest string
+	average string
 }
 
 func ReadTableMapping(dataDir string) (result []Table) {
@@ -107,32 +112,58 @@ func BuildTable(dataDir string, mapping []string) (table Table) {
 func BuildColumns(columnNames []string) (result []Column) {
 	result = make([]Column, len(columnNames))
 	for i, name := range(columnNames) {
-		result[i] = Column{name, NewBloomFilter()}
+		result[i] = Column{name, NewBloomFilter(), "", "", "", "", ""}
 	}
 	return result
 }
 
 func (this *Table) Analyze() {
 	lineReader := NewLineReader(this.path)
+
 	for {
-		fields := ReadRow(lineReader)
-		if len(fields) == 0 {
+		row := ReadRow(lineReader)
+		if len(row) == 0 {
 			break
 		}
-		for i, value := range(fields) {
+		for i, value := range(row) {
 			column := this.columns[i]
-			column.filter.Add([]byte(value))
+			column.Analye(value)
+
 		}
 	}
 }
+
+func (this *Column) Analyze(string value) {
+	this.filter.Add([]byte(value))
+	if this.minimum > value {
+		this.minimum = value
+	}
+	if (this.maxv < value) {
+		this.maxv = value}
+	}
+	if (this.lonlen < len(value) {
+		this.lonlen = len(value)
+	}
+	if (this.shortlen > value) {
+		this.shortlen = len(value)
+	}
+}
+
+
 
 func main() {
 	dataDir := ParseDataDir()
 	fmt.Println("data is in", dataDir)
 	tables := ReadTableMapping(dataDir)
 	fmt.Println("found ", len(tables), "table definitions")
+<<<<<<< Updated upstream
 	for _, table := range(tables[100:]) {
 		fmt.Println("analyzing", table.path)
 		table.Analyze()
 	}
+=======
+	first := tables[0]
+	fmt.Println("first", first.fileName)
+	first.Analyze()
+>>>>>>> Stashed changes
 }
