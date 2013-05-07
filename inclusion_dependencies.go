@@ -86,7 +86,8 @@ type Column struct {
 	minimum string
 	longest int
 	shortest int
-	average float
+	average float32
+	datatype string
 }
 
 func ReadTableMapping(dataDir string) (result []Table) {
@@ -112,30 +113,61 @@ func BuildTable(dataDir string, mapping []string) (table Table) {
 func BuildColumns(columnNames []string) (result []Column) {
 	result = make([]Column, len(columnNames))
 	for i, name := range(columnNames) {
-		result[i] = Column{name, NewBloomFilter(), "", "", 0,0,0.0}
+		result[i] = Column{name, NewBloomFilter(), "", "", 0,0,0.0,""}
 	}
 	return result
 }
 
+
+func typeCheck(value interface{}) (result string) {
+
+	switch value.(type) {
+	case int:
+		return "int"
+	case float64:
+		return "float64"
+	case string:
+		return "string"
+	default:
+		return "NA"
+	}
+	panic("unreachable")
+}
+
+
 func (this *Table) Analyze() {
 	lineReader := NewLineReader(this.path)
+    
     var countrows int
+
 	for {
 		row := ReadRow(lineReader)
 		if len(row) == 0 {
 			break
 		}
 		for i, value := range(row) {
+
 			column := this.columns[i]
 			column.AnalyzeString(value)
+
+			
+			
 
 		}
 		countrows++
 
 
 	}
-	/* Hier müsste eine weitere For Schleife alle columns[i] den wert average / countrows rechnen für die aktuelle Table
-	    --> weiss gerade nicht wie ich die Anzahl der Columns ohne weiteres bekomme */
+	/*
+
+	Brauche Idee wie ich die Nummer der Spalten der Tabelle bekomme,
+	um diese als Abruchbedingung für die for Schleife verwenden zu können
+
+	for i := 0; i < numberrows; i++ {
+
+		this.columns[i].average=this.columns[i].average/countrows
+
+	}*/
 
 }
 
@@ -153,7 +185,14 @@ func (this *Column) AnalyzeString(value string) {
 	if this.shortest > len(value) {
 		this.shortest = len(value)
 	}
+	if this.datatype != "string" {
+		this.datatype = typeCheck(value)
+
+	}
+	/*
+	Type Konflikt brauche für Average float und len gibt Int
 	this.average = this.average + len(value)
+	*/
 }
 
 
