@@ -206,8 +206,5 @@ func main() {
 		fmt.Println("analyzing", table.path)
 		table.Analyze()
 	}
-/*	first := tables[0]
-	fmt.Println("first", first.fileName)
-	first.Analyze() */
 
 }
