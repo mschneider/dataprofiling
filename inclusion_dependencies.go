@@ -127,7 +127,7 @@ func (this *Table) Analyze() {
 		}
 		for i, value := range(row) {
 			column := this.columns[i]
-			column.Analye(value)
+			column.Analyze(value)
 
 		}
 	}
@@ -138,14 +138,14 @@ func (this *Column) Analyze(string value) {
 	if this.minimum > value {
 		this.minimum = value
 	}
-	if (this.maxv < value) {
-		this.maxv = value}
+	if this.maximum < value {
+		this.maximum = value
 	}
-	if (this.lonlen < len(value) {
-		this.lonlen = len(value)
+	if this.longest < len(value) {
+		this.longest = len(value)
 	}
-	if (this.shortlen > value) {
-		this.shortlen = len(value)
+	if this.shortest > len(value) {
+		this.shortest = len(value)
 	}
 }
 
@@ -156,14 +156,12 @@ func main() {
 	fmt.Println("data is in", dataDir)
 	tables := ReadTableMapping(dataDir)
 	fmt.Println("found ", len(tables), "table definitions")
-<<<<<<< Updated upstream
 	for _, table := range(tables[100:]) {
 		fmt.Println("analyzing", table.path)
 		table.Analyze()
 	}
-=======
 	first := tables[0]
 	fmt.Println("first", first.fileName)
 	first.Analyze()
->>>>>>> Stashed changes
+
 }
