@@ -84,9 +84,9 @@ type Column struct {
 	filter *bloom.BloomFilter
 	maximum string
 	minimum string
-	longest string
-	shortest string
-	average string
+	longest int
+	shortest int
+	average float
 }
 
 func ReadTableMapping(dataDir string) (result []Table) {
@@ -112,14 +112,14 @@ func BuildTable(dataDir string, mapping []string) (table Table) {
 func BuildColumns(columnNames []string) (result []Column) {
 	result = make([]Column, len(columnNames))
 	for i, name := range(columnNames) {
-		result[i] = Column{name, NewBloomFilter(), "", "", "", "", ""}
+		result[i] = Column{name, NewBloomFilter(), "", "", 0,0,0.0}
 	}
 	return result
 }
 
 func (this *Table) Analyze() {
 	lineReader := NewLineReader(this.path)
-
+    var countrows int
 	for {
 		row := ReadRow(lineReader)
 		if len(row) == 0 {
@@ -127,13 +127,19 @@ func (this *Table) Analyze() {
 		}
 		for i, value := range(row) {
 			column := this.columns[i]
-			column.Analyze(value)
+			column.AnalyzeString(value)
 
 		}
+		countrows++
+
+
 	}
+	/* Hier müsste eine weitere For Schleife alle columns[i] den wert average / countrows rechnen für die aktuelle Table
+	    --> weiss gerade nicht wie ich die Anzahl der Columns ohne weiteres bekomme */
+
 }
 
-func (this *Column) Analyze(string value) {
+func (this *Column) AnalyzeString(value string) {
 	this.filter.Add([]byte(value))
 	if this.minimum > value {
 		this.minimum = value
@@ -147,6 +153,7 @@ func (this *Column) Analyze(string value) {
 	if this.shortest > len(value) {
 		this.shortest = len(value)
 	}
+	this.average = this.average + len(value)
 }
 
 
@@ -160,8 +167,8 @@ func main() {
 		fmt.Println("analyzing", table.path)
 		table.Analyze()
 	}
-	first := tables[0]
+/*	first := tables[0]
 	fmt.Println("first", first.fileName)
-	first.Analyze()
+	first.Analyze() */
 
 }
