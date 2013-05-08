@@ -81,9 +81,10 @@ type Column struct {
 	filter *BloomFilter
 	maximum string
 	minimum string
-	longest string
-	shortest string
-	average string
+	longest int
+	shortest int
+	average float32
+	datatype string
 }
 
 func ReadTableMapping(dataDir string) (result []Table) {
@@ -109,14 +110,31 @@ func BuildTable(dataDir string, mapping []string) (table Table) {
 func BuildColumns(columnNames []string) (result []Column) {
 	result = make([]Column, len(columnNames))
 	for i, name := range(columnNames) {
-		result[i] = Column{name, NewBloomFilter(), "", "", "", "", ""}
+		result[i] = Column{name, NewBloomFilter(), "", "", 0,0,0.0,""}
 	}
 	return result
 }
 
+
+func typeCheck(value interface{}) (result string) {
+
+	switch value.(type) {
+	case int:
+		return "int"
+	case float64:
+		return "float64"
+	case string:
+		return "string"
+	default:
+		return "NA"
+	}
+	panic("unreachable")
+}
+
+
 func (this *Table) Analyze() {
 	lineReader := NewLineReader(this.path)
-	line := 0
+	rowCount := 0
 	for {
 		row := ReadRow(lineReader)
 		if len(row) == 0 {
@@ -124,16 +142,22 @@ func (this *Table) Analyze() {
 		}
 		for i, value := range(row) {
 			column := this.columns[i]
-			column.Analyze(value)
+			column.AnalyzeString(value)
 		}
 		if line > 100000 {
 			break
 		}
-		line++
+		rowCount++
+	}
+	for _, column := range(this.columns) {
+		column.FinishAnalysis(rowCount)
 	}
 }
 
-func (this *Column) Analyze(value string) {
+func (this *Column) AnalyzeString(value string) {
+	if this.datatype != "string" {
+		this.datatype = typeCheck(value)
+	}
 	this.filter.Add([]byte(value))
 	if this.minimum > value {
 		this.minimum = value
@@ -147,6 +171,11 @@ func (this *Column) Analyze(value string) {
 	if len(this.shortest) > len(value) {
 		this.shortest = value
 	}
+	this.average += len(value)
+}
+
+func (this *Column) FinishAnalysis(rowCount int) {
+	
 }
 
 func main() {
