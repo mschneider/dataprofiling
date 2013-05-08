@@ -6,10 +6,8 @@ import (
 	"io"
 	"os"
 	"strings"
-	"encoding/binary"
 	"hash/fnv"
 	"github.com/willf/bitset"
-	"github.com/willf/bloom"
 )
 
 func check(e error) {
@@ -50,27 +48,26 @@ type BloomFilter struct {
 	bits *bitset.BitSet
 }
 
-func hash(entry []byte) (results []byte) {
+func (this *BloomFilter) hash(entry []byte) (results []uint) {
 	hash := fnv.New64()
-	hash.Write(entry)
-	digest := hash.Sum64()
-	results = make([]byte, 10)
-	binary.PutUvarint(results, digest)
-	fmt.Println("bytes", binary.PutUvarint(results, digest))
+	for i := 0; i < int(this.k); i++ {
+		hash.Write(entry)
+		digest := uint(hash.Sum64()) % this.m
+		results = append(results, digest)
+	}
 	return results
 }
 
 func (this *BloomFilter) Add(entry []byte) {
-	hashes := hash(entry)
-	for i := 0; i < int(this.k); i++ {
-		this.bits.Set(uint(hashes[i]))
+	for _, index := range(this.hash(entry)) {
+		this.bits.Set(index)
 	}
 }
 
-func NewBloomFilter() *bloom.BloomFilter {
-	m := uint(7*10*1000*1000)
-	k := uint(5)
-	return bloom.New(m, k)
+func NewBloomFilter() *BloomFilter {
+	m := uint(1000*1000)
+	k := uint(4)
+	return &BloomFilter{m, k, bitset.New(m)}
 }
 
 type Table struct {
@@ -81,7 +78,7 @@ type Table struct {
 
 type Column struct {
 	name string
-	filter *bloom.BloomFilter
+	filter *BloomFilter
 	maximum string
 	minimum string
 	longest string
@@ -119,7 +116,7 @@ func BuildColumns(columnNames []string) (result []Column) {
 
 func (this *Table) Analyze() {
 	lineReader := NewLineReader(this.path)
-
+	line := 0
 	for {
 		row := ReadRow(lineReader)
 		if len(row) == 0 {
@@ -127,43 +124,38 @@ func (this *Table) Analyze() {
 		}
 		for i, value := range(row) {
 			column := this.columns[i]
-			column.Analye(value)
-
+			column.Analyze(value)
 		}
+		if line > 100000 {
+			break
+		}
+		line++
 	}
 }
 
-func (this *Column) Analyze(string value) {
+func (this *Column) Analyze(value string) {
 	this.filter.Add([]byte(value))
 	if this.minimum > value {
 		this.minimum = value
 	}
-	if (this.maxv < value) {
-		this.maxv = value}
+	if this.maximum < value {
+		this.maximum = value
 	}
-	if (this.lonlen < len(value) {
-		this.lonlen = len(value)
+	if len(this.longest) < len(value) {
+		this.longest = value
 	}
-	if (this.shortlen > value) {
-		this.shortlen = len(value)
+	if len(this.shortest) > len(value) {
+		this.shortest = value
 	}
 }
-
-
 
 func main() {
 	dataDir := ParseDataDir()
 	fmt.Println("data is in", dataDir)
 	tables := ReadTableMapping(dataDir)
 	fmt.Println("found ", len(tables), "table definitions")
-<<<<<<< Updated upstream
-	for _, table := range(tables[100:]) {
+	for _, table := range(tables) {
 		fmt.Println("analyzing", table.path)
 		table.Analyze()
 	}
-=======
-	first := tables[0]
-	fmt.Println("first", first.fileName)
-	first.Analyze()
->>>>>>> Stashed changes
 }
