@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -46,7 +47,7 @@ func ParseDataDir() (dataDir string) {
 	return dataDir
 }
 
-type Database []Table
+type Database []*Table
 
 type Table struct {
 	columns []*Column
@@ -55,10 +56,13 @@ type Table struct {
 }
 
 type Column struct {
-	name     string
-	dataType string
-	stats    Statistics
-	filter   BloomFilter
+	table      *Table
+	id         int
+	name       string
+	dataType   string
+	stats      Statistics
+	filter     BloomFilter
+	candidates map[*Column]bool
 }
 
 type Statistics interface {
@@ -215,23 +219,21 @@ func ReadTableMapping(dataDir string) (result Database) {
 	return result
 }
 
-func BuildTable(dataDir string, mapping []string) (table Table) {
-	table.name = mapping[0]
-	table.path = dataDir + mapping[1]
-	table.columns = BuildColumns(mapping[2:])
-	return table
-}
-
-func BuildColumns(columnNames []string) (result []*Column) {
-	result = make([]*Column, len(columnNames))
-	for i, name := range columnNames {
-		result[i] = &Column{name: name}
-	}
+func BuildTable(dataDir string, mapping []string) (result *Table) {
+	result = &Table{name: mapping[0], path: dataDir + mapping[1]}
+	result.BuildColumns(mapping[2:])
 	return result
 }
 
-func (this Table) Analyze(done chan int) {
-	fmt.Println("started analyzing", this.path)
+func (this *Table) BuildColumns(columnNames []string) {
+	this.columns = make([]*Column, len(columnNames))
+	for i, name := range columnNames {
+		this.columns[i] = &Column{table: this, name: name}
+	}
+}
+
+func (this *Table) Analyze(done chan int) {
+	/*fmt.Println("started analyzing", this.path)*/
 	lineReader := NewLineReader(this.path)
 	rowCount := 0
 	for {
@@ -247,11 +249,14 @@ func (this Table) Analyze(done chan int) {
 			column.filter.Add(row[columnIndex])
 		}
 		rowCount++
+		if rowCount > 10000 {
+			break
+		}
 	}
 	for _, column := range this.columns {
 		column.stats.FinishAnalysis(rowCount)
 	}
-	fmt.Println("finished analyzing", this.path)
+	/*fmt.Println("finished analyzing", this.path)*/
 	done <- 1
 }
 
@@ -306,27 +311,93 @@ func (db Database) AllColumns() (result []*Column) {
 	return result
 }
 
+func (db Database) BuildCandidates() {
+	columns := db.AllColumns()
+	c := make(chan int)
+	for i, column := range columns {
+		column.id = i
+		go func(column *Column) {
+			column.BuildCandidates(columns)
+			c <- 1
+		}(column)
+	}
+	for i := 0; i < len(columns); i++ {
+		<-c
+	}
+}
+
+func (this *Column) Bits() int {
+	return int(this.filter.Bits().Count())
+}
+
+func (this *Column) Name() string {
+	return this.table.name + "." + this.name
+}
+
+func (this *Column) SimiliarTo(other *Column) bool {
+	return this.dataType == other.dataType && this.stats.SimiliarTo(other.stats) && this.filter.SimiliarTo(other.filter)
+}
+
+func (this *Column) BuildCandidates(others []*Column) {
+	this.candidates = make(map[*Column]bool)
+	for _, other := range others {
+		this.candidates[other] = (this != other) && this.SimiliarTo(other)
+	}
+}
+
+type InclusionGraph struct {
+	nodes           []*Column
+	adjacencyMatrix [][]bool
+}
+
 type Candidate struct {
 	a *Column
 	b *Column
 }
 
-func (db Database) GenerateCandidates() (results []*Candidate) {
-	for _, column := range db.AllColumns() {
-		for _, otherColumn := range db.AllColumns() {
-			if column != otherColumn && column.SimiliarTo(otherColumn) {
-				fmt.Println("found candidate:", column, otherColumn)
-				column.stats.Print()
-				otherColumn.stats.Print()
-				results = append(results, &Candidate{column, otherColumn})
+func (this *InclusionGraph) Add(candidate *Candidate) {
+	this.adjacencyMatrix[candidate.a.id][candidate.b.id] = true
+}
+
+func (db Database) ToInclusionGraph() (result *InclusionGraph) {
+	nodes := db.AllColumns()
+	adjacencyMatrix := make([][]bool, len(nodes))
+	for i := range adjacencyMatrix {
+		adjacencyMatrix[i] = make([]bool, len(nodes))
+	}
+	result = &InclusionGraph{nodes, adjacencyMatrix}
+	return result
+}
+
+func (db Database) Check(candidate *Candidate) bool {
+	return true
+}
+
+func (db Database) NextCandidate() (result *Candidate) {
+	columns := db.AllColumns()
+	sort.Sort(ByMostCandidates(columns))
+	for _, column := range columns {
+		for _, candidate := range columns {
+			if column.candidates[candidate] {
+				delete(column.candidates, candidate)
+				fmt.Println("NextCandidate", column.Name(), column.Bits(), len(column.candidates), "->", candidate.Name(), candidate.Bits(), len(candidate.candidates))
+				return &Candidate{column, candidate}
 			}
 		}
 	}
-	return results
+	return nil
 }
 
-func (this *Column) SimiliarTo(other *Column) bool {
-	return this.dataType == other.dataType && this.stats.SimiliarTo(other.stats) && this.filter.SimiliarTo(other.filter)
+type ByMostCandidates []*Column
+
+func (cs ByMostCandidates) Len() int {
+	return len(cs)
+}
+func (cs ByMostCandidates) Swap(i, j int) {
+	cs[i], cs[j] = cs[j], cs[i]
+}
+func (cs ByMostCandidates) Less(i, j int) bool {
+	return len(cs[i].candidates) > len(cs[j].candidates)
 }
 
 func main() {
@@ -340,7 +411,13 @@ func main() {
 	fmt.Println("found", len(db), "table definitions")
 
 	db.Preprocess()
+	db.BuildCandidates()
+	graph := db.ToInclusionGraph()
+	for {
+		candidate := db.NextCandidate()
+		if db.Check(candidate) {
+			graph.Add(candidate)
+		}
+	}
 
-	candidates := db.GenerateCandidates()
-	fmt.Println("found", len(candidates), "candidates")
 }
