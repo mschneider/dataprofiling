@@ -212,7 +212,7 @@ func BuildColumns(columnNames []string) (result []*Column) {
 	return result
 }
 
-func (this Table) BuildStatistics(done chan int) {
+func (this Table) Analyze(done chan int) {
 	fmt.Println("started analyzing", this.path)
 	lineReader := NewLineReader(this.path)
 	rowCount := 0
@@ -281,13 +281,20 @@ func main() {
 	fmt.Println("data is in", dataDir)
 	tables := ReadTableMapping(dataDir)
 	fmt.Println("found ", len(tables), "table definitions")
+
+	// start table analysis in separate threads
+	// the channel c gets messaged each time an analysis is finished
 	c := make(chan int, len(tables))
 	for _, table := range tables {
-		go table.BuildStatistics(c)
+		go table.Analyze(c)
 	}
+
+	// wait for one message per table
+	// afterwards all analyses are finished
 	for i := 0; i < len(tables); i++ {
 		<-c
 	}
+
 	for _, table := range tables {
 		for _, column := range table.columns {
 			fmt.Println("Column:", column)
