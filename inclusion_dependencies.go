@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
-	"os"
-	"strings"
-	"hash/fnv"
 	"github.com/willf/bitset"
-	"regexp"
+	"hash/fnv"
+	"io"
+	"math"
+	"os"
+	"reflect"
+	"strconv"
+	"strings"
 )
 
 func check(e error) {
@@ -29,6 +31,7 @@ func ReadRow(reader *bufio.Reader) (fields []string) {
 		return
 	}
 	check(err)
+	line = strings.Trim(line, "\n")
 	return strings.Split(line, "\t")
 }
 
@@ -43,49 +46,142 @@ func ParseDataDir() (dataDir string) {
 	return dataDir
 }
 
-type BloomFilter struct {
-	m uint
-	k uint
-	bits *bitset.BitSet
+type Table struct {
+	columns []*Column
+	path    string
+	name    string
 }
 
-func (this *BloomFilter) hash(entry []byte) (results []uint) {
+type Column struct {
+	name     string
+	dataType string
+	stats    Statistics
+	filter   BloomFilter
+}
+
+type Statistics interface {
+	Print()
+	Add(s string)
+	FinishAnalysis(rowCount int)
+}
+
+type intStatistics struct {
+	average float64
+	maximum int64
+	minimum int64
+}
+
+func (this *intStatistics) Print() {
+	fmt.Println("max:", this.maximum, "\t| min:", this.minimum, "\t| avg:", this.average)
+}
+
+func (this *intStatistics) Add(s string) {
+	value, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return
+	}
+	if this.minimum > value {
+		this.minimum = value
+	}
+	if this.maximum < value {
+		this.maximum = value
+	}
+	this.average += float64(value)
+}
+
+func (this *intStatistics) FinishAnalysis(rowCount int) {
+	this.average /= float64(rowCount)
+}
+
+type stringStatistics struct {
+	averageLength float64
+	maximum       string
+	minimum       string
+	longest       string
+	shortest      string
+}
+
+func (this *stringStatistics) Print() {
+	fmt.Println("max:", this.maximum, "\t| min:", this.minimum, "\t| lon:", this.longest, "\t| sho:", this.shortest, "\t| avg:", this.averageLength)
+}
+
+func (this *stringStatistics) Add(value string) {
+	if this.minimum == "" || this.minimum > value {
+		this.minimum = value
+	}
+	if this.maximum == "" || this.maximum < value {
+		this.maximum = value
+	}
+	if this.longest == "" || len(this.longest) < len(value) {
+		this.longest = value
+	}
+	if this.shortest == "" || len(this.shortest) > len(value) {
+		this.shortest = value
+	}
+	this.averageLength += float64(len(value))
+}
+
+func (this *stringStatistics) FinishAnalysis(rowCount int) {
+	this.averageLength /= float64(rowCount)
+}
+
+type BloomFilter interface {
+	Initialize(m uint)
+	Add(s string)
+	Print()
+}
+
+type bloomFilter struct {
+	bits *bitset.BitSet
+	m    uint
+}
+
+func (this *bloomFilter) Set(index uint) {
+	this.bits = this.bits.Set(index)
+}
+
+func (this *bloomFilter) Initialize(m uint) {
+	this.m = m
+	this.bits = bitset.New(m)
+}
+
+func (this *bloomFilter) Print() {
+	fmt.Println("m:", this.m, "\t| bit-len:", this.bits.Len(), "\t| bit-count:", this.bits.Count())
+}
+
+type intBloomFilter struct {
+	bloomFilter
+}
+
+type stringBloomFilter struct {
+	bloomFilter
+	k uint
+}
+
+func (this *intBloomFilter) Add(s string) {
+	number, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		number = math.MaxInt64
+	}
+	index := uint(number) % this.m
+	this.Set(index)
+}
+
+func (this *stringBloomFilter) Add(s string) {
+	for _, index := range this.Hashes(s) {
+		this.Set(index)
+	}
+}
+
+func (this *stringBloomFilter) Hashes(input string) (results []uint) {
+	bytes := []byte(input)
 	hash := fnv.New64()
 	for i := 0; i < int(this.k); i++ {
-		hash.Write(entry)
+		hash.Write(bytes)
 		digest := uint(hash.Sum64()) % this.m
 		results = append(results, digest)
 	}
 	return results
-}
-
-func (this *BloomFilter) Add(entry []byte) {
-	for _, index := range(this.hash(entry)) {
-		this.bits.Set(index)
-	}
-}
-
-func NewBloomFilter() *BloomFilter {
-	m := uint(1000*1000)
-	k := uint(4)
-	return &BloomFilter{m, k, bitset.New(m)}
-}
-
-type Table struct {
-	columns []Column
-	path string
-	name string
-}
-
-type Column struct {
-	name string
-	filter *BloomFilter
-	maximum string
-	minimum string
-	longest int
-	shortest int
-	average float32
-	datatype string
 }
 
 func ReadTableMapping(dataDir string) (result []Table) {
@@ -108,38 +204,16 @@ func BuildTable(dataDir string, mapping []string) (table Table) {
 	return table
 }
 
-func BuildColumns(columnNames []string) (result []Column) {
-	result = make([]Column, len(columnNames))
-	for i, name := range(columnNames) {
-		result[i] = Column{name, NewBloomFilter(), "", "", 0,0,0.0,""}
+func BuildColumns(columnNames []string) (result []*Column) {
+	result = make([]*Column, len(columnNames))
+	for i, name := range columnNames {
+		result[i] = &Column{name: name}
 	}
 	return result
 }
 
-
-func typeCheck(value string) (result string) {
-
-	int_check, _ := regexp.Compile(`^\s*[+-]?[0-9]+\s*$`)
-	float_check, _ := regexp.Compile(`^\s*[+-]?[0-9]*\.+[0-9]+([eE][-+]?[0-9]+)?\s*$`)
-
-	if int_check.MatchString(value) {
-
-		return "int"
-
-	} else if float_check.MatchString(value) {
-	
-		return "float64"
-
-	} else {
-
-		return "string"
-
-	}
-	panic("unreachable")
-}
-
-
-func (this *Table) Analyze() {
+func (this Table) BuildStatistics(done chan int) {
+	fmt.Println("started analyzing", this.path)
 	lineReader := NewLineReader(this.path)
 	rowCount := 0
 	for {
@@ -147,45 +221,59 @@ func (this *Table) Analyze() {
 		if len(row) == 0 {
 			break
 		}
-		for i, value := range(row) {
-			column := this.columns[i]
-			column.AnalyzeString(value)
+		for columnIndex, column := range this.columns {
+			if rowCount == 0 {
+				column.AnalyzeType(row[columnIndex])
+				fmt.Println("Type", column, reflect.TypeOf(column.stats), column.stats, reflect.TypeOf(column.filter), column.filter)
+			}
+			column.stats.Add(row[columnIndex])
+			column.filter.Add(row[columnIndex])
 		}
-		/* Wofür wird der Block genutzt ?
-		if line > 100000 {
-			break
-		}
-		*/
 		rowCount++
 	}
-	for _, column := range(this.columns) {
-		column.FinishAnalysis(rowCount)
+	for _, column := range this.columns {
+		column.stats.FinishAnalysis(rowCount)
 	}
+	fmt.Println("finished analyzing", this.path)
+	done <- 1
 }
 
-func (this *Column) AnalyzeString(value string) {
-	//Falls bereits ein String in der Spalte vorkommt interessiert mich nicht ob der nächste Wert evtl. nur eine Zahl ist
-	if this.datatype != "string" {
-		this.datatype = typeCheck(value)
-	}
-	this.filter.Add([]byte(value))
-	if this.minimum > value {
-		this.minimum = value
-	}
-	if this.maximum < value {
-		this.maximum = value
-	}
-	if this.longest < len(value) {
-		this.longest = len(value)
-	}
-	if this.shortest > len(value) {
-		this.shortest = len(value)
-	}
-	this.average += float32(len(value))
+func IsInt(s string) bool {
+	_, err := strconv.ParseInt(s, 10, 64)
+	return err == nil
 }
 
-func (this *Column) FinishAnalysis(rowCount int) {
-	this.average = this.average/float32(rowCount)
+func IsFloat(s string) bool {
+	_, err := strconv.ParseFloat(s, 32)
+	return err == nil
+}
+
+func IsBool(s string) bool {
+	return ("." == s) || ("y" == s) || ("n" == s)
+}
+
+func (this *Column) AnalyzeType(value string) {
+	if IsInt(value) {
+		this.dataType = "int"
+		this.stats = &intStatistics{average: 0.0, maximum: math.MinInt64, minimum: math.MaxInt64}
+		this.filter = new(intBloomFilter)
+		this.filter.Initialize(1000000)
+	} else if IsFloat(value) {
+		this.dataType = "float"
+		this.stats = &stringStatistics{averageLength: 0.0}
+		this.filter = &stringBloomFilter{k: 4}
+		this.filter.Initialize(1000000)
+	} else if IsBool(value) {
+		this.dataType = "bool"
+		this.stats = &stringStatistics{averageLength: 0.0}
+		this.filter = &stringBloomFilter{k: 1}
+		this.filter.Initialize(2)
+	} else {
+		this.dataType = "string"
+		this.stats = &stringStatistics{averageLength: 0.0}
+		this.filter = &stringBloomFilter{k: 4}
+		this.filter.Initialize(1000000)
+	}
 }
 
 func main() {
@@ -193,8 +281,18 @@ func main() {
 	fmt.Println("data is in", dataDir)
 	tables := ReadTableMapping(dataDir)
 	fmt.Println("found ", len(tables), "table definitions")
-	for _, table := range(tables) {
-		fmt.Println("analyzing", table.path)
-		table.Analyze()
+	c := make(chan int, len(tables))
+	for _, table := range tables {
+		go table.BuildStatistics(c)
+	}
+	for i := 0; i < len(tables); i++ {
+		<-c
+	}
+	for _, table := range tables {
+		for _, column := range table.columns {
+			fmt.Println("Column:", column)
+			column.stats.Print()
+			column.filter.Print()
+		}
 	}
 }
