@@ -8,7 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
-	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -224,7 +224,6 @@ func (this Table) Analyze(done chan int) {
 		for columnIndex, column := range this.columns {
 			if rowCount == 0 {
 				column.AnalyzeType(row[columnIndex])
-				fmt.Println("Type", column, reflect.TypeOf(column.stats), column.stats, reflect.TypeOf(column.filter), column.filter)
 			}
 			column.stats.Add(row[columnIndex])
 			column.filter.Add(row[columnIndex])
@@ -268,6 +267,9 @@ func (this *Column) AnalyzeType(value string) {
 }
 
 func main() {
+	// enable all cpu cores
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	fmt.Println("using", runtime.NumCPU(), "threads")
 	dataDir := ParseDataDir()
 	fmt.Println("data is in", dataDir)
 	tables := ReadTableMapping(dataDir)
