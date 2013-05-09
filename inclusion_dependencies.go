@@ -248,10 +248,6 @@ func IsFloat(s string) bool {
 	return err == nil
 }
 
-func IsBool(s string) bool {
-	return ("." == s) || ("y" == s) || ("n" == s)
-}
-
 func (this *Column) AnalyzeType(value string) {
 	if IsInt(value) {
 		this.dataType = "int"
@@ -263,11 +259,6 @@ func (this *Column) AnalyzeType(value string) {
 		this.stats = &stringStatistics{averageLength: 0.0}
 		this.filter = &stringBloomFilter{k: 4}
 		this.filter.Initialize(1000000)
-	} else if IsBool(value) {
-		this.dataType = "bool"
-		this.stats = &stringStatistics{averageLength: 0.0}
-		this.filter = &stringBloomFilter{k: 1}
-		this.filter.Initialize(2)
 	} else {
 		this.dataType = "string"
 		this.stats = &stringStatistics{averageLength: 0.0}
