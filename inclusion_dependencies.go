@@ -8,6 +8,7 @@ import (
 	"strings"
 	"hash/fnv"
 	"github.com/willf/bitset"
+	"regexp"
 )
 
 func check(e error) {
@@ -116,17 +117,23 @@ func BuildColumns(columnNames []string) (result []Column) {
 }
 
 
-func typeCheck(value interface{}) (result string) {
+func typeCheck(value string) (result string) {
 
-	switch value.(type) {
-	case int:
+	int_check, _ := regexp.Compile(`^\s*[+-]?[0-9]+\s*$`)
+	float_check, _ := regexp.Compile(`^\s*[+-]?[0-9]*\.+[0-9]+([eE][-+]?[0-9]+)?\s*$`)
+
+	if int_check.MatchString(value) {
+
 		return "int"
-	case float64:
+
+	} else if float_check.MatchString(value) {
+	
 		return "float64"
-	case string:
+
+	} else {
+
 		return "string"
-	default:
-		return "NA"
+
 	}
 	panic("unreachable")
 }
@@ -144,9 +151,11 @@ func (this *Table) Analyze() {
 			column := this.columns[i]
 			column.AnalyzeString(value)
 		}
+		/* Wofür wird der Block genutzt ?
 		if line > 100000 {
 			break
 		}
+		*/
 		rowCount++
 	}
 	for _, column := range(this.columns) {
@@ -155,6 +164,7 @@ func (this *Table) Analyze() {
 }
 
 func (this *Column) AnalyzeString(value string) {
+	//Falls bereits ein String in der Spalte vorkommt interessiert mich nicht ob der nächste Wert evtl. nur eine Zahl ist
 	if this.datatype != "string" {
 		this.datatype = typeCheck(value)
 	}
@@ -165,17 +175,17 @@ func (this *Column) AnalyzeString(value string) {
 	if this.maximum < value {
 		this.maximum = value
 	}
-	if len(this.longest) < len(value) {
-		this.longest = value
+	if this.longest < len(value) {
+		this.longest = len(value)
 	}
-	if len(this.shortest) > len(value) {
-		this.shortest = value
+	if this.shortest > len(value) {
+		this.shortest = len(value)
 	}
-	this.average += len(value)
+	this.average += float32(len(value))
 }
 
 func (this *Column) FinishAnalysis(rowCount int) {
-	
+	this.average = this.average/float32(rowCount)
 }
 
 func main() {
