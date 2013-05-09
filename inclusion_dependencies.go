@@ -46,6 +46,8 @@ func ParseDataDir() (dataDir string) {
 	return dataDir
 }
 
+type Database []Table
+
 type Table struct {
 	columns []*Column
 	path    string
@@ -63,6 +65,7 @@ type Statistics interface {
 	Print()
 	Add(s string)
 	FinishAnalysis(rowCount int)
+	SimiliarTo(other Statistics) bool
 }
 
 type intStatistics struct {
@@ -91,6 +94,11 @@ func (this *intStatistics) Add(s string) {
 
 func (this *intStatistics) FinishAnalysis(rowCount int) {
 	this.average /= float64(rowCount)
+}
+
+func (this *intStatistics) SimiliarTo(s Statistics) bool {
+	other := s.(*intStatistics)
+	return this.minimum >= other.minimum && this.maximum <= other.maximum
 }
 
 type stringStatistics struct {
@@ -125,10 +133,16 @@ func (this *stringStatistics) FinishAnalysis(rowCount int) {
 	this.averageLength /= float64(rowCount)
 }
 
+func (this *stringStatistics) SimiliarTo(s Statistics) bool {
+	other := s.(*stringStatistics)
+	return this.minimum >= other.minimum && this.maximum <= other.maximum && len(this.shortest) >= len(other.shortest) && len(this.longest) <= len(other.longest)
+}
+
 type BloomFilter interface {
 	Initialize(m uint)
 	Add(s string)
-	Print()
+	Bits() *bitset.BitSet
+	SimiliarTo(other BloomFilter) bool
 }
 
 type bloomFilter struct {
@@ -145,17 +159,16 @@ func (this *bloomFilter) Initialize(m uint) {
 	this.bits = bitset.New(m)
 }
 
-func (this *bloomFilter) Print() {
-	fmt.Println("m:", this.m, "\t| bit-len:", this.bits.Len(), "\t| bit-count:", this.bits.Count())
+func (this *bloomFilter) Bits() *bitset.BitSet {
+	return this.bits
+}
+
+func (this *bloomFilter) SimiliarTo(other BloomFilter) bool {
+	return this.bits.Difference(other.Bits()).None()
 }
 
 type intBloomFilter struct {
 	bloomFilter
-}
-
-type stringBloomFilter struct {
-	bloomFilter
-	k uint
 }
 
 func (this *intBloomFilter) Add(s string) {
@@ -165,6 +178,11 @@ func (this *intBloomFilter) Add(s string) {
 	}
 	index := uint(number) % this.m
 	this.Set(index)
+}
+
+type stringBloomFilter struct {
+	bloomFilter
+	k uint
 }
 
 func (this *stringBloomFilter) Add(s string) {
@@ -184,7 +202,7 @@ func (this *stringBloomFilter) Hashes(input string) (results []uint) {
 	return results
 }
 
-func ReadTableMapping(dataDir string) (result []Table) {
+func ReadTableMapping(dataDir string) (result Database) {
 	mappingFileName := dataDir + "mapping.tsv"
 	lineReader := NewLineReader(mappingFileName)
 	for {
@@ -266,33 +284,63 @@ func (this *Column) AnalyzeType(value string) {
 	}
 }
 
-func main() {
-	// enable all cpu cores
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	fmt.Println("using", runtime.NumCPU(), "threads")
-	dataDir := ParseDataDir()
-	fmt.Println("data is in", dataDir)
-	tables := ReadTableMapping(dataDir)
-	fmt.Println("found ", len(tables), "table definitions")
-
+func (db Database) Preprocess() {
 	// start table analysis in separate threads
 	// the channel c gets messaged each time an analysis is finished
-	c := make(chan int, len(tables))
-	for _, table := range tables {
+	c := make(chan int, len(db))
+	for _, table := range db {
 		go table.Analyze(c)
 	}
 
 	// wait for one message per table
 	// afterwards all analyses are finished
-	for i := 0; i < len(tables); i++ {
+	for i := 0; i < len(db); i++ {
 		<-c
 	}
+}
 
-	for _, table := range tables {
-		for _, column := range table.columns {
-			fmt.Println("Column:", column)
-			column.stats.Print()
-			column.filter.Print()
+func (db Database) AllColumns() (result []*Column) {
+	for _, table := range db {
+		result = append(result, table.columns...)
+	}
+	return result
+}
+
+type Candidate struct {
+	a *Column
+	b *Column
+}
+
+func (db Database) GenerateCandidates() (results []*Candidate) {
+	for _, column := range db.AllColumns() {
+		for _, otherColumn := range db.AllColumns() {
+			if column != otherColumn && column.SimiliarTo(otherColumn) {
+				fmt.Println("found candidate:", column, otherColumn)
+				column.stats.Print()
+				otherColumn.stats.Print()
+				results = append(results, &Candidate{column, otherColumn})
+			}
 		}
 	}
+	return results
+}
+
+func (this *Column) SimiliarTo(other *Column) bool {
+	return this.dataType == other.dataType && this.stats.SimiliarTo(other.stats) && this.filter.SimiliarTo(other.filter)
+}
+
+func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	fmt.Println("using", runtime.NumCPU(), "threads")
+
+	dataDir := ParseDataDir()
+	fmt.Println("data is in", dataDir)
+
+	db := ReadTableMapping(dataDir)
+	fmt.Println("found", len(db), "table definitions")
+
+	db.Preprocess()
+
+	candidates := db.GenerateCandidates()
+	fmt.Println("found", len(candidates), "candidates")
 }
