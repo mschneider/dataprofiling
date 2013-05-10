@@ -62,6 +62,7 @@ type Column struct {
 	dataType   string
 	stats      Statistics
 	filter     BloomFilter
+	values     map[string]bool
 	candidates map[*Column]bool
 }
 
@@ -228,12 +229,12 @@ func BuildTable(dataDir string, mapping []string) (result *Table) {
 func (this *Table) BuildColumns(columnNames []string) {
 	this.columns = make([]*Column, len(columnNames))
 	for i, name := range columnNames {
-		this.columns[i] = &Column{table: this, name: name}
+		this.columns[i] = &Column{table: this, name: name, values: make(map[string]bool)}
 	}
 }
 
 func (this *Table) Analyze(done chan int) {
-	/*fmt.Println("started analyzing", this.path)*/
+	fmt.Println("started analyzing", this.path)
 	lineReader := NewLineReader(this.path)
 	rowCount := 0
 	for {
@@ -245,18 +246,20 @@ func (this *Table) Analyze(done chan int) {
 			if rowCount == 0 {
 				column.AnalyzeType(row[columnIndex])
 			}
-			column.stats.Add(row[columnIndex])
-			column.filter.Add(row[columnIndex])
+			value := row[columnIndex]
+			column.stats.Add(value)
+			column.filter.Add(value)
+			column.values[value] = true
 		}
 		rowCount++
 		/*if rowCount > 10000 {*/
-			/*break*/
+		/*break*/
 		/*}*/
 	}
 	for _, column := range this.columns {
 		column.stats.FinishAnalysis(rowCount)
 	}
-	/*fmt.Println("finished analyzing", this.path)*/
+	fmt.Println("finished analyzing", this.path)
 	done <- 1
 }
 
@@ -338,7 +341,7 @@ func (this *Column) SimiliarTo(other *Column) bool {
 	return this.dataType == other.dataType && this.stats.SimiliarTo(other.stats) && this.filter.SimiliarTo(other.filter)
 }
 
-func (this *Column) Values() (result map[string]bool) {
+func (this *Column) ReadValues() (result map[string]bool) {
 	result = make(map[string]bool)
 	index := -1
 	for i, column := range this.table.columns {
@@ -381,14 +384,14 @@ func (this *InclusionGraph) Add(candidate *Candidate) {
 	// complete transistive closure
 	// A <= B & I <= A -> I <= B
 	// I <= B & B <= C -> I <= C
-	for _, iConnectedTo := range(this.adjacencyMatrix) {
+	for i, iConnectedTo := range this.adjacencyMatrix {
 		if iConnectedTo[a] {
 			iConnectedTo[b] = true
-			delete(this.columns[i].candidates, this.columns[b])
-			for c, bConnectedToC := range(this.adjacencyMatrix[b]) {
+			delete(this.nodes[i].candidates, this.nodes[b])
+			for c, bConnectedToC := range this.adjacencyMatrix[b] {
 				if bConnectedToC {
 					iConnectedTo[c] = true
-					delete(this.columns[i].candidates, this.columns[c])
+					delete(this.nodes[i].candidates, this.nodes[c])
 				}
 			}
 		}
@@ -398,8 +401,8 @@ func (this *InclusionGraph) Add(candidate *Candidate) {
 
 func (this *InclusionGraph) Count() (result int) {
 	result = 0
-	for i, _ := range(this.adjacencyMatrix) {
-		for j, _ := range(this.adjacencyMatrix) {
+	for i, _ := range this.adjacencyMatrix {
+		for j, _ := range this.adjacencyMatrix {
 			if (i != j) && this.adjacencyMatrix[i][j] {
 				result += 1
 			}
@@ -420,9 +423,8 @@ func (db Database) ToInclusionGraph() (result *InclusionGraph) {
 }
 
 func (db Database) Check(candidate *Candidate) bool {
-	otherValues := candidate.b.Values()
-	for e := range candidate.a.Values() {
-		if !otherValues[e] {
+	for e := range candidate.a.values {
+		if !candidate.b.values[e] {
 			return false
 		}
 	}
