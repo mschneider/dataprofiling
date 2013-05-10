@@ -249,9 +249,9 @@ func (this *Table) Analyze(done chan int) {
 			column.filter.Add(row[columnIndex])
 		}
 		rowCount++
-		if rowCount > 10000 {
-			break
-		}
+		/*if rowCount > 10000 {*/
+			/*break*/
+		/*}*/
 	}
 	for _, column := range this.columns {
 		column.stats.FinishAnalysis(rowCount)
@@ -338,6 +338,25 @@ func (this *Column) SimiliarTo(other *Column) bool {
 	return this.dataType == other.dataType && this.stats.SimiliarTo(other.stats) && this.filter.SimiliarTo(other.filter)
 }
 
+func (this *Column) Values() (result map[string]bool) {
+	result = make(map[string]bool)
+	index := -1
+	for i, column := range this.table.columns {
+		if column == this {
+			index = i
+		}
+	}
+	lineReader := NewLineReader(this.table.path)
+	for {
+		row := ReadRow(lineReader)
+		if len(row) == 0 {
+			break
+		}
+		result[row[index]] = true
+	}
+	return result
+}
+
 func (this *Column) BuildCandidates(others []*Column) {
 	this.candidates = make(map[*Column]bool)
 	for _, other := range others {
@@ -356,7 +375,37 @@ type Candidate struct {
 }
 
 func (this *InclusionGraph) Add(candidate *Candidate) {
-	this.adjacencyMatrix[candidate.a.id][candidate.b.id] = true
+	fmt.Println("Found Inclusion", candidate.a.Name(), candidate.a.Bits(), len(candidate.a.candidates), "<=", candidate.b.Name(), candidate.b.Bits(), len(candidate.b.candidates))
+	a := candidate.a.id
+	b := candidate.b.id
+	// complete transistive closure
+	// A <= B & I <= A -> I <= B
+	// I <= B & B <= C -> I <= C
+	for _, iConnectedTo := range(this.adjacencyMatrix) {
+		if iConnectedTo[a] {
+			iConnectedTo[b] = true
+			delete(this.columns[i].candidates, this.columns[b])
+			for c, bConnectedToC := range(this.adjacencyMatrix[b]) {
+				if bConnectedToC {
+					iConnectedTo[c] = true
+					delete(this.columns[i].candidates, this.columns[c])
+				}
+			}
+		}
+	}
+	fmt.Println("total:", this.Count())
+}
+
+func (this *InclusionGraph) Count() (result int) {
+	result = 0
+	for i, _ := range(this.adjacencyMatrix) {
+		for j, _ := range(this.adjacencyMatrix) {
+			if (i != j) && this.adjacencyMatrix[i][j] {
+				result += 1
+			}
+		}
+	}
+	return result
 }
 
 func (db Database) ToInclusionGraph() (result *InclusionGraph) {
@@ -364,12 +413,19 @@ func (db Database) ToInclusionGraph() (result *InclusionGraph) {
 	adjacencyMatrix := make([][]bool, len(nodes))
 	for i := range adjacencyMatrix {
 		adjacencyMatrix[i] = make([]bool, len(nodes))
+		adjacencyMatrix[i][i] = true
 	}
 	result = &InclusionGraph{nodes, adjacencyMatrix}
 	return result
 }
 
 func (db Database) Check(candidate *Candidate) bool {
+	otherValues := candidate.b.Values()
+	for e := range candidate.a.Values() {
+		if !otherValues[e] {
+			return false
+		}
+	}
 	return true
 }
 
