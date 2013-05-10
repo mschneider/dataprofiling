@@ -473,9 +473,11 @@ func main() {
 	graph := db.ToInclusionGraph()
 	for {
 		candidate := db.NextCandidate()
+		if candidate == nil {
+			break
+		}
 		if db.Check(candidate) {
 			graph.Add(candidate)
 		}
 	}
-
 }
